@@ -1,0 +1,68 @@
+# === Annotation ====#
+annotation_dir: C:/Users/Admin/Documents/Nicolas/ia_georadar/Annotation # Absolute path to the annotation folder
+half_width_px: 2
+viz_max: 2 # number of images in the visualization folder
+viz_folder_name: "Visualisation"
+random_seed: 0
+class_registry: # dictionary of class index
+  interface: 0
+  hyperbole: 1
+  echo: 2
+  sol: 3
+  autre: 4
+
+# === Model ===
+# YOLOv11 segmentation variants: yolo11n-seg, yolo11s-seg, yolo11m-seg, yolo11l-seg, yolo11x-seg
+# n=nano (fastest), s=small (good baseline), m=medium. With 12 GB VRAM, m is doable at 256x512.
+model_dir: ./models
+model_weights: yolo11m-seg.pt
+work_dir: _yolo_cfg
+
+# === Inference ===
+inference_dir: C:/Users/Admin/Documents/Nicolas/ia_georadar/Code/runs/segment/gprIA_v1-7
+custom_colors:
+  0: [0, 0, 255]
+  1: [255, 0, 0]
+  2: [0, 255, 0]
+  3: [255, 255, 0]
+  4: [0, 255, 255]
+
+# === Training schedule ===
+epochs: 100             # Upper bound; early stopping via 'patience' will cut it short
+imgsz: [256, 512]       # [H, W] — matches your native B-scan size, no wasted letterbox
+batch: 16               # 256x512 is small, you can probably push to 32 with -s. Try and watch VRAM.
+device: 0               # GPU index (RTX 5070 Ti) # "cpu"
+workers: 4              # Dataloader processes. 4 is reasonable; raise if CPU-bound.
+project: null           # Parent folder for runs
+run_name: gprIA_v1
+patience: 1000          # Stop if no val improvement for N epochs
+optimizer: auto         # "auto" lets Ultralytics pick (usually SGD for >10k imgs, AdamW otherwise)
+lr0: 0.01               # Initial LR. Default for SGD; if optimizer becomes AdamW, consider 0.001
+cos_lr: true            # Cosine LR schedule, generally smoother convergence than linear
+amp: true               # Mixed precision (fp16). Saves VRAM, faster on RTX cards.
+cache: false            # "ram" loads all images in RAM (fast, you have 32 GB). Set to "ram" if dataset fits.
+rect: false             # Rectangular batching — incompatible with mosaic, leave false during training
+multi_scale: false
+close_mosaic: 10        # Last 10 epochs run without mosaic for cleaner final convergence
+overlap_mask: false      # Allow overlapping instance masks in target tensor
+mask_ratio: 4           # Mask resolution factor; 4 is the sane default
+
+# === Augmentation (overrides Ultralytics defaults) ===
+# Geometric
+flipud: 0.0             # No vertical flip — ground must stay on top
+fliplr: 0.5             # Horizontal flip is physically valid for a B-scan
+degrees: 0.0            # No rotation — preserves vertical "depth" axis
+translate: 0.05         # Mild translation; ±5% of image size
+scale: 0.1              # Mild scaling; large values would distort hyperbola curvature
+shear: 0.0              # No shear
+perspective: 0.0        # No perspective distortion
+
+# Photometric — adjust if your B-scans are grayscale vs colormapped
+hsv_h: 0.0              # Hue jitter — 0 for grayscale
+hsv_s: 0.0              # Saturation jitter — 0 for grayscale
+hsv_v: 0.4              # Brightness jitter — useful for gain variability
+
+# Composition
+mosaic: 0.5             # Reduced from 1.0; full mosaic mixes B-scan contexts heavily
+mixup: 0.0              # Off; blending two B-scans isn't physical
+copy_paste: 0.2         # Pastes segmented hyperboles between images — useful for class imbalance
