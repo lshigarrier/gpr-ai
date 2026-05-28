@@ -2,7 +2,7 @@
 annotation_dir: C:/Users/Admin/Documents/Nicolas/ia_georadar/Annotation # Absolute path to the annotation folder
 half_width_px: 2
 viz_max: 2 # number of images in the visualization folder
-viz_folder_name: "Visualisation"
+viz_folder_name: Visualisation
 random_seed: 0
 class_registry: # dictionary of class index
   interface: 0
@@ -19,7 +19,9 @@ model_weights: yolo11m-seg.pt
 work_dir: _yolo_cfg
 
 # === Inference ===
-inference_dir: C:/Users/Admin/Documents/Nicolas/ia_georadar/Code/runs/segment/gprIA_v1-7
+inference_dir: C:/Users/Admin/Documents/Nicolas/ia_georadar/Code/runs/segment/gprIA_v1-6
+inference_output_dir: all_output
+inference_mode: all  # all, validate, or train
 custom_colors:
   0: [0, 0, 255]
   1: [255, 0, 0]

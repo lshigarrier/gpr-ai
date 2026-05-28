@@ -36,15 +36,16 @@ author: loic.shi-garrier@aviation-civile.gouv.fr
 import cv2
 import numpy as np
 from pathlib import Path
+from tqdm import tqdm
 from ultralytics import YOLO
 from ultralytics.utils.plotting import colors as original_colors
 
 from utils import get_conf
 
 
-def run_prediction_with_legend(model, val_images, run_dir: Path, conf):
+def run_prediction_with_legend(model, images_to_infer, run_dir: Path, conf):
     """Run prediction, apply custom colors, add a right margin, draw the legend, and save."""
-    output_dir = run_dir / "mask_only_preds"
+    output_dir = run_dir / conf.inference_output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nGenerating validation images in: {output_dir}")
 
@@ -56,18 +57,19 @@ def run_prediction_with_legend(model, val_images, run_dir: Path, conf):
         # Overwrite the default color with our custom RGB color
         original_colors.palette[class_id] = rgb_color
 
-    # Run prediction without auto-saving
-    results = model.predict(
-        source=[str(p) for p in val_images],
-        save=False,
-        imgsz=conf.imgsz,
-        device=conf.device
-    )
-
     # Process each image, add margin, draw legend, and save
-    margin_width = 180
+    margin_width = 130
 
-    for result, img_path in zip(results, val_images):
+    for img_path in tqdm(images_to_infer, desc="Running Inference"):
+        results = model.predict(
+            source=str(img_path),
+            save=False,
+            imgsz=conf.imgsz,
+            device=conf.device,
+            verbose=False
+        )
+        result = results[0]
+
         # Ultralytics generates the BGR image (numpy array) with masks applied
         plotted_img = result.plot(boxes=False, labels=False)
         h, w, c = plotted_img.shape
@@ -95,7 +97,7 @@ def run_prediction_with_legend(model, val_images, run_dir: Path, conf):
             y_offset += 30
 
         # Save the final composite image
-        save_path = output_dir / img_path.name
+        save_path = output_dir / f"{img_path.stem}_mask.png"
         cv2.imwrite(str(save_path), new_img)
 
 
@@ -114,14 +116,22 @@ def main():
     # Load configuration
     conf = get_conf()
 
-    # Resolve the Validate split directory and gather images
+    # Gather images based on the selected mode
     annotation_dir = Path(conf.annotation_dir)
-    val_dir = annotation_dir / "Validate"
-    val_images = collect_annotated_images(val_dir)
+    if conf.inference_mode == "validate":
+        split_dir = annotation_dir / "Validate"
+        images_to_infer = collect_annotated_images(split_dir)
+    elif conf.inference_mode == "train":
+        split_dir = annotation_dir / "Train"
+        images_to_infer = collect_annotated_images(split_dir)
+    elif conf.inference_mode == "all":
+        images_to_infer = [img_path.resolve() for img_path in annotation_dir.rglob("*.png")]
+    else:
+        raise ValueError(f"Invalid inference_data value: '{conf.inference_mode}'. Must be 'validate', 'train', or 'all'.")
 
-    print(f"Annotated validation images for inference: {len(val_images)}")
-    if not val_images:
-        raise RuntimeError("No annotated images found in Validate.")
+    print(f"Images for inference ({conf.inference_mode}): {len(images_to_infer)}")
+    if not images_to_infer:
+        raise RuntimeError(f"No images found for inference mode '{conf.inference_mode}'.")
 
     # Determine the weights path based on the inference directory
     inference_dir = Path(conf.inference_dir)
@@ -134,7 +144,7 @@ def main():
     model = YOLO(weights_path)
 
     # Run predictions, generate integrated legend, and save
-    run_prediction_with_legend(model, val_images, inference_dir, conf)
+    run_prediction_with_legend(model, images_to_infer, inference_dir, conf)
     print("Inference complete.")
 
 
