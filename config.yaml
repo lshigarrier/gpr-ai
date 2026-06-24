@@ -31,13 +31,13 @@ custom_colors:
 
 # === Training schedule ===
 epochs: 100             # Upper bound; early stopping via 'patience' will cut it short
-imgsz: [256, 512]       # [H, W] — matches your native B-scan size, no wasted letterbox
+imgsz: 512              # Image size (length of the square's side)
 batch: 16               # 256x512 is small, you can probably push to 32 with -s. Try and watch VRAM.
 device: 0               # GPU index (RTX 5070 Ti) # "cpu"
 workers: 4              # Dataloader processes. 4 is reasonable; raise if CPU-bound.
 project: null           # Parent folder for runs
 run_name: gprIA_v1
-patience: 1000          # Stop if no val improvement for N epochs
+patience: 0             # Stop if no val improvement for N epochs; early stopping de-activated if set to 0
 optimizer: auto         # "auto" lets Ultralytics pick (usually SGD for >10k imgs, AdamW otherwise)
 lr0: 0.01               # Initial LR. Default for SGD; if optimizer becomes AdamW, consider 0.001
 cos_lr: true            # Cosine LR schedule, generally smoother convergence than linear
@@ -65,6 +65,6 @@ hsv_s: 0.0              # Saturation jitter — 0 for grayscale
 hsv_v: 0.4              # Brightness jitter — useful for gain variability
 
 # Composition
-mosaic: 0.5             # Reduced from 1.0; full mosaic mixes B-scan contexts heavily
+mosaic: 0.5             # Create a mosaic from four images
 mixup: 0.0              # Off; blending two B-scans isn't physical
 copy_paste: 0.2         # Pastes segmented hyperboles between images — useful for class imbalance
