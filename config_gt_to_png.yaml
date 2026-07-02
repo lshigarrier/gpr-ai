@@ -1,0 +1,7 @@
+input_dir: C:/Users/Admin/Documents/data_test/recyclee_sol
+output_dir: C:/Users/Admin/Documents/data_test/recyclee_sol_aide
+velocities_path: C:/Users/Admin/Documents/planches/recyclee/velocities.csv
+layers_paths:
+  - C:/Users/Admin/Documents/planches/recyclee/layers_rani.csv
+  - C:/Users/Admin/Documents/planches/recyclee/layers_core.csv
+margin: 5

@@ -218,6 +218,7 @@ def process_sgy_file(sgy_path, output_parent, margin_px, time_tick, dist_tick):
             meta.add_text("GPS_Y_START", str(win_y_start))
             meta.add_text("GPS_X_END", str(win_x_end))
             meta.add_text("GPS_Y_END", str(win_y_end))
+            meta.add_text("TIME_STEP_NS", str(dt_ns))
 
             out_name = out_folder / f"{x_idx}_{y_start}.png"
             final_img.save(out_name, "PNG", pnginfo=meta)

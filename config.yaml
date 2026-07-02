@@ -1,4 +1,4 @@
-# === Annotation ====#
+# === Annotation ====
 annotation_dir: C:/Users/Admin/Documents/Nicolas/ia_georadar/Annotation # Absolute path to the annotation folder
 half_width_px: 2
 viz_max: 2 # number of images in the visualization folder
