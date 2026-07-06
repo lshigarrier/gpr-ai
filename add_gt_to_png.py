@@ -79,7 +79,7 @@ def generate_colors(n: int) -> dict:
     colors = {}
     # Génération de couleurs réparties sur le cercle chromatique pour maximiser la différence
     for i in range(n):
-        hue = i / n
+        hue = (i * 0.618033988749895) % 1.0
         # Conversion simple HSV vers RGB (saturation=1, value=1)
         h_i = int(hue * 6)
         f = hue * 6 - h_i
@@ -103,7 +103,8 @@ def generate_colors(n: int) -> dict:
     return colors
 
 
-def process_image(img_path: Path, out_path: Path, layers_data: dict, colors_map: dict, margin: int):
+def process_image(img_path: Path, out_path: Path, layers_data: dict, colors_map: dict,
+                  margin: int, thickness: int, alpha:float):
     # Création du dossier parent de l'image de sortie
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -123,6 +124,11 @@ def process_image(img_path: Path, out_path: Path, layers_data: dict, colors_map:
     bscan_w = width - 2 * margin
     bscan_h = height - 2 * margin
 
+    half_thick = thickness // 2
+
+    # Accumulateur pour stocker { (x, y): [somme_R, somme_G, somme_B, nombre_de_couches] }
+    color_accumulator = {}
+
     # Parcours des A-scans (colonnes du B-scan sans marges)
     for i in range(bscan_w):
         # Interpolation spatiale
@@ -138,17 +144,46 @@ def process_image(img_path: Path, out_path: Path, layers_data: dict, colors_map:
             _, idx = tree.query([curr_x, curr_y])
             point_times = times_list[idx]
 
-            color = colors_map[layer_name]
+            cr, cg, cb = colors_map[layer_name]
 
             for t_ns in point_times:
                 # Calcul de l'index du pixel en y
                 y_pixel = int(round(t_ns / time_step_ns))
 
-                # Vérification que le point est dans l'image (sans les marges)
-                if 0 <= y_pixel < bscan_h:
-                    final_x = i + margin
-                    final_y = y_pixel + margin
-                    pixels[final_x, final_y] = color
+                # Détermination des bornes de la bande autour du centre
+                y_start = y_pixel - half_thick
+                y_end = y_start + thickness
+
+                for dy in range(y_start, y_end):
+                    # Vérification que le point reste dans l'image (sans recouvrir les marges)
+                    if 0 <= dy < bscan_h:
+                        final_x = i + margin
+                        final_y = dy + margin
+
+                        # Ajout à l'accumulateur au lieu de modifier le pixel immédiatement
+                        if (final_x, final_y) not in color_accumulator:
+                            color_accumulator[(final_x, final_y)] = [0, 0, 0, 0]
+
+                        color_accumulator[(final_x, final_y)][0] += cr
+                        color_accumulator[(final_x, final_y)][1] += cg
+                        color_accumulator[(final_x, final_y)][2] += cb
+                        color_accumulator[(final_x, final_y)][3] += 1
+
+    # Application des couleurs accumulées sur l'image
+    for (x, y), (r_sum, g_sum, b_sum, count) in color_accumulator.items():
+        pr, pg, pb = pixels[x, y]
+
+        # Moyenne des couleurs des layers pour ce pixel
+        avg_cr = r_sum // count
+        avg_cg = g_sum // count
+        avg_cb = b_sum // count
+
+        # Mélange final : B-scan d'origine pondéré par (1 - alpha) + moyenne des layers pondérée par alpha
+        new_r = int(pr * (1 - alpha) + avg_cr * alpha)
+        new_g = int(pg * (1 - alpha) + avg_cg * alpha)
+        new_b = int(pb * (1 - alpha) + avg_cb * alpha)
+
+        pixels[x, y] = (new_r, new_g, new_b)
 
     # Préservation des métadonnées d'origine
     png_info = PngImagePlugin.PngInfo()
@@ -200,7 +235,7 @@ def main():
         rel_path = img_path.relative_to(input_dir)
         out_path = output_dir / rel_path
 
-        process_image(img_path, out_path, layers_data, colors_map, conf.margin)
+        process_image(img_path, out_path, layers_data, colors_map, conf.margin, conf.thickness, conf.alpha)
 
     # Génération de la légende à la racine du dossier de sortie
     output_dir.mkdir(parents=True, exist_ok=True)

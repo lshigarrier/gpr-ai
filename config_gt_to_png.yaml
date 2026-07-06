@@ -5,3 +5,5 @@ layers_paths:
   - C:/Users/Admin/Documents/planches/recyclee/layers_rani.csv
   - C:/Users/Admin/Documents/planches/recyclee/layers_core.csv
 margin: 5
+thickness: 2
+alpha: 0.6
