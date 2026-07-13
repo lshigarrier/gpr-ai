@@ -1,3 +1,19 @@
+"""
+Objectif : Extrait des données d'épaisseurs depuis un fichier Excel (onglets R et B),
+calcule leur position spatiale en interpolant le long de segments définis dans un CSV d'emprises,
+et génère un CSV de sortie contenant les épaisseurs et les coordonnées en EPSG:4326 (Longitude/Latitude).
+
+Entrées :
+- excel_path : Chemin vers le fichier Excel des mesures.
+- emprises_path : Chemin vers le CSV d'emprises (contenant 'id', 'latitude', 'longitude').
+
+Sortie :
+- Un fichier CSV avec les colonnes : latitude, longitude, layer_1, layer_2.
+
+Exemple de commande :
+python rani_to_csv.py donnees.xlsx emprises.csv --output resultats.csv
+"""
+
 import argparse
 import pandas as pd
 import numpy as np
@@ -16,8 +32,8 @@ def load_and_project_emprise(csv_path: Path) -> dict:
 
     corners = {}
     for _, row in df_emprise.iterrows():
-        x, y = transformer.transform(row['Longitude'], row['Latitude'])
-        corners[row['ID']] = np.array([x, y])
+        x, y = transformer.transform(row['longitude'], row['latitude'])
+        corners[row['id']] = np.array([x, y])
 
     return corners
 
@@ -26,9 +42,9 @@ def compute_geometry(corners: dict):
     """
     Calcule les 12 points de départ et le vecteur directeur unitaire.
     """
-    c1 = corners['Coin_1']
-    c2 = corners['Coin_2']
-    c4 = corners['Coin_4']
+    c1 = corners['coin_1']
+    c2 = corners['coin_2']
+    c4 = corners['coin_4']
 
     # Création de 12 points intérieurs sur un segment divisé en 13 intervalles
     start_points = [c1 + (i / 13.0) * (c4 - c1) for i in range(1, 13)]
@@ -108,6 +124,27 @@ def process_excel(excel_path: Path, start_points: list, direction_vector: np.nda
     return pd.DataFrame(results)
 
 
+def project_results(df_results: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reprojette les coordonnées de EPSG:32631 (X/Y en mètres) vers EPSG:4326 (longitude/latitude).
+    Remplace les colonnes 'coord_x' et 'coord_y' par 'longitude' et 'latitude'.
+    """
+    # always_xy=True garantit que l'ordre de sortie sera (longitude, latitude)
+    transformer_inv = Transformer.from_crs("EPSG:32631", "EPSG:4326", always_xy=True)
+
+    # Transformation vectorisée sur l'ensemble des valeurs
+    lon, lat = transformer_inv.transform(df_results['coord_x'].values, df_results['coord_y'].values)
+
+    df_results['latitude'] = lat
+    df_results['longitude'] = lon
+
+    # Suppression des colonnes en mètres et réorganisation
+    df_results = df_results.drop(columns=['coord_x', 'coord_y'])
+
+    # On retourne le DataFrame avec les colonnes dans l'ordre souhaité
+    return df_results[['latitude', 'longitude', 'layer_1', 'layer_2']]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Extrait et géoréférence les épaisseurs Excel vers profondeurs CSV.")
     parser.add_argument("excel_path", type=Path, help="Chemin vers le fichier Excel.")
@@ -118,9 +155,8 @@ def main():
 
     corners = load_and_project_emprise(args.emprises_path)
     start_points, direction_vector = compute_geometry(corners)
-
     df_results = process_excel(args.excel_path, start_points, direction_vector)
-
+    df_results = project_results(df_results)
     df_results.to_csv(args.output, index=False)
     print(f"Succès : {len(df_results)} points sauvegardés dans {args.output}")
 

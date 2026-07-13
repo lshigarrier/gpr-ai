@@ -20,9 +20,10 @@ python add_gt_to_png.py config_gt_to_png
 """
 
 import csv
+from pyproj import Transformer
 from scipy.spatial import KDTree
 from pathlib import Path
-from PIL import Image, ImageDraw, PngImagePlugin
+from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 from utils import get_conf
 
@@ -38,10 +39,12 @@ def load_velocities(velocities_path: Path) -> dict:
 
 def load_layers(layers_paths: list, velocities: dict) -> dict:
     layers_data = {}
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:32631", always_xy=True)
 
     for path in layers_paths:
         layer_name = path.stem
-        coords = []
+        lons = []
+        lats = []
         times = []
 
         with path.open(mode='r', encoding='utf-8') as f:
@@ -50,9 +53,8 @@ def load_layers(layers_paths: list, velocities: dict) -> dict:
             layer_cols = [h for h in headers if h.startswith("layer_")]
 
             for row in reader:
-                x = float(row['coord_x'])
-                y = float(row['coord_y'])
-                coords.append([x, y])
+                lons.append(float(row['longitude']))
+                lats.append(float(row['latitude']))
 
                 point_times = []
                 cumul_time = 0.0
@@ -65,6 +67,9 @@ def load_layers(layers_paths: list, velocities: dict) -> dict:
 
                 times.append(point_times)
 
+        xs, ys = transformer.transform(lons, lats)
+        coords = list(zip(xs, ys))
+
         tree = KDTree(coords)
         layers_data[layer_name] = {
             "tree": tree,
@@ -73,6 +78,7 @@ def load_layers(layers_paths: list, velocities: dict) -> dict:
         }
 
     return layers_data
+
 
 
 def generate_colors(n: int) -> dict:
@@ -193,14 +199,17 @@ def process_image(img_path: Path, out_path: Path, layers_data: dict, colors_map:
     rgb_img.save(out_path, "PNG", pnginfo=png_info)
 
 
-def create_legend(output_dir: Path, colors_map: dict):
-    square_size = 30
-    padding = 10
-    width = 300
+def create_legend(output_dir: Path, colors_map: dict, legend_name: str):
+    square_size = 128
+    padding = 16
+    width = 512
+    font_size = 48
     height = (square_size + padding) * len(colors_map) + padding
 
     legend_img = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(legend_img)
+
+    font = ImageFont.load_default(size=font_size)
 
     for idx, (layer_name, color) in enumerate(colors_map.items()):
         y0 = padding + idx * (square_size + padding)
@@ -209,15 +218,21 @@ def create_legend(output_dir: Path, colors_map: dict):
         x1 = x0 + square_size
 
         draw.rectangle([x0, y0, x1, y1], fill=color)
-        draw.text((x1 + padding, y0 + square_size // 4), layer_name, fill="black")
+        draw.text(
+            (x1 + padding, y0 + (square_size - font_size) // 2),
+            layer_name,
+            fill="black",
+            font=font
+        )
 
-    legend_img.save(output_dir / "legend.png", "PNG")
+    legend_img.save(output_dir / f"{legend_name}.png", "PNG")
 
 
 def main():
     conf = get_conf(verbose=False)
-    input_dir = Path(conf.input_dir)
+    directories = [Path(p) for p in conf.input_dir]
     output_dir = Path(conf.output_dir)
+    root_dir = Path(conf.root_dir)
     velocities_path = Path(conf.velocities_path)
     layers_paths = [Path(p) for p in conf.layers_paths]
 
@@ -231,15 +246,17 @@ def main():
 
     # Traitement des images PNG
     print("Start processing images...")
-    for img_path in input_dir.rglob("*.png"):
-        rel_path = img_path.relative_to(input_dir)
-        out_path = output_dir / rel_path
+    for directory in directories:
+        for img_path in directory.rglob("*.png"):
+            # Calcul du chemin relatif par rapport à root_dir
+            rel_path = img_path.relative_to(root_dir)
+            out_path = output_dir / rel_path
+            out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        process_image(img_path, out_path, layers_data, colors_map, conf.margin, conf.thickness, conf.alpha)
+            process_image(img_path, out_path, layers_data, colors_map, conf.margin, conf.thickness, conf.alpha)
 
     # Génération de la légende à la racine du dossier de sortie
-    output_dir.mkdir(parents=True, exist_ok=True)
-    create_legend(output_dir, colors_map)
+    create_legend(output_dir, colors_map, conf.legend_name)
     print("Processing completed.")
 
 
