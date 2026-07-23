@@ -1,124 +1,146 @@
 """
 Objectif du code :
 Ce script traite une arborescence de dossiers contenant des images PNG (B-scans) et y superpose
-des horizons géologiques à partir de fichiers CSV (layers). Il convertit les épaisseurs des couches
-(en cm) en temps de parcours (ns) en utilisant un fichier de vitesses, puis dessine ces couches en
-couleur sur les B-scans convertis en RGB. Les images générées reproduisent l'arborescence d'entrée.
-Une légende est générée à la racine du dossier de sortie.
+des horizons géologiques à partir de fichiers CSV. L'application est multi-planches : chaque image
+est d'abord géo-localisée par trace (A-scan) pour déterminer à quelle emprise de planche elle appartient.
+Ensuite, les épaisseurs des couches de vérité terrain spécifiques à cette planche sont converties
+en temps de parcours (ns) à l'aide d'un fichier de vitesses propre à la planche, puis dessinées
+en couleur sur les B-scans. Une légende unique globale regroupant toutes les couches est générée.
 
 Entrées :
-- Dossier d'entrée (contenant les sous-dossiers et les PNG).
-- Fichier velocities.csv (colonnes: layer_id, velocity).
-- Fichiers layers_xxx.csv (colonnes: coord_x, coord_y, layer_1, ..., layer_n).
+- Fichiers de configuration définissant les répertoires d'entrée/sortie.
+- Dictionnaires de chemins pour chaque planche (footprints, velocities, layers).
 
 Sorties :
 - Un dossier de sortie avec l'arborescence conservée contenant les images annotées.
-- Une image legend.png à la racine du dossier de sortie.
+- Une image legend.png unique à la racine du dossier de sortie.
 
 Exemple de commande :
 python add_gt_to_png.py config_gt_to_png
 """
 
-import csv
+import numpy as np
+import pandas as pd
 from pyproj import Transformer
 from scipy.spatial import KDTree
+from matplotlib.path import Path as MplPath
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 from utils import get_conf
 
 
-def load_velocities(velocities_path: Path) -> dict:
+def load_footprints(footprint_paths: dict) -> dict:
+    """
+    Charge les fichiers CSV d'emprises pour chaque planche et convertit
+    les coordonnées EPSG:4326 (lat/lon) vers EPSG:32631 (mètres).
+    Renvoie un dictionnaire de polygones matplotlib.path.Path pour un test d'inclusion vectorisé.
+    """
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:32631", always_xy=True)
+    footprints = {}
+
+    for planche_id, csv_path in footprint_paths.items():
+        df = pd.read_csv(csv_path)
+        xs, ys = transformer.transform(df['longitude'].values, df['latitude'].values)
+        vertices = np.column_stack((xs, ys))
+        footprints[planche_id] = MplPath(vertices)
+
+    return footprints
+
+
+def load_velocities(velocities_paths: dict) -> dict:
+    """
+    Charge les vitesses pour chaque planche.
+    Renvoie un dictionnaire imbriqué : {planche_id: {layer_id: velocity, ...}, ...}
+    """
     velocities = {}
-    with velocities_path.open(mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            velocities[row['layer_id']] = float(row['velocity'])
+    for planche_id, csv_path in velocities_paths.items():
+        df = pd.read_csv(csv_path)
+        velocities[planche_id] = dict(zip(df['layer_id'], df['velocity']))
     return velocities
 
 
-def load_layers(layers_paths: list, velocities: dict) -> dict:
+def load_layers(layers_paths: dict, velocities: dict) -> tuple:
+    """
+    Charge les fichiers de couches, projette les points et construit les arbres KDTrees
+    par planche. Les temps de parcours sont calculés en amont de manière vectorisée.
+
+    Retourne :
+    - layers_data : structure contenant les KDTrees et les temps précalculés par planche.
+    - all_layer_names : liste de tous les noms de couches uniques (pour la légende).
+    """
     layers_data = {}
+    all_layer_names = []
     transformer = Transformer.from_crs("EPSG:4326", "EPSG:32631", always_xy=True)
 
-    for path in layers_paths:
-        layer_name = path.stem
-        lons = []
-        lats = []
-        times = []
+    for planche_id, paths_list in layers_paths.items():
+        layers_data[planche_id] = {}
+        planche_vels = velocities[planche_id]
 
-        with path.open(mode='r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            headers = reader.fieldnames
-            layer_cols = [h for h in headers if h.startswith("layer_")]
+        for path in paths_list:
+            layer_name = path.stem
+            if layer_name not in all_layer_names:
+                all_layer_names.append(layer_name)
 
-            for row in reader:
-                lons.append(float(row['longitude']))
-                lats.append(float(row['latitude']))
+            df = pd.read_csv(path)
+            xs, ys = transformer.transform(df['longitude'].values, df['latitude'].values)
+            coords = np.column_stack((xs, ys))
+            tree = KDTree(coords)
 
-                point_times = []
-                cumul_time = 0.0
-                for col in layer_cols:
-                    thickness_cm = float(row[col])
-                    vel = velocities[col]
-                    time_ns = 2 * thickness_cm / vel
-                    cumul_time += time_ns
-                    point_times.append(cumul_time)
+            layer_cols = [c for c in df.columns if c.startswith("layer_")]
+            times = np.zeros((len(df), len(layer_cols)))
 
-                times.append(point_times)
+            # Calcul cumulé des temps par point de la vérité terrain
+            cumul_time = np.zeros(len(df))
+            for i, col in enumerate(layer_cols):
+                thickness_cm = df[col].values
+                vel = planche_vels[col]
+                time_ns = 2 * thickness_cm / vel
+                cumul_time += time_ns
+                times[:, i] = cumul_time
 
-        xs, ys = transformer.transform(lons, lats)
-        coords = list(zip(xs, ys))
+            layers_data[planche_id][layer_name] = {
+                "tree": tree,
+                "times": times
+            }
 
-        tree = KDTree(coords)
-        layers_data[layer_name] = {
-            "tree": tree,
-            "times": times,
-            "layer_cols": layer_cols
-        }
-
-    return layers_data
-
+    return layers_data, all_layer_names
 
 
 def generate_colors(n: int) -> dict:
+    """Génère un dictionnaire de couleurs uniques et bien distinctes."""
     colors = {}
-    # Génération de couleurs réparties sur le cercle chromatique pour maximiser la différence
     for i in range(n):
         hue = (i * 0.618033988749895) % 1.0
-        # Conversion simple HSV vers RGB (saturation=1, value=1)
         h_i = int(hue * 6)
         f = hue * 6 - h_i
         p = 0
         q = int(255 * (1 - f))
         t = int(255 * (1 - (1 - f)))
         v = 255
-        if h_i % 6 == 0:
-            r, g, b = v, t, p
-        elif h_i % 6 == 1:
-            r, g, b = q, v, p
-        elif h_i % 6 == 2:
-            r, g, b = p, v, t
-        elif h_i % 6 == 3:
-            r, g, b = p, q, v
-        elif h_i % 6 == 4:
-            r, g, b = t, p, v
-        else:
-            r, g, b = v, p, q
+
+        if h_i % 6 == 0:   r, g, b = v, t, p
+        elif h_i % 6 == 1: r, g, b = q, v, p
+        elif h_i % 6 == 2: r, g, b = p, v, t
+        elif h_i % 6 == 3: r, g, b = p, q, v
+        elif h_i % 6 == 4: r, g, b = t, p, v
+        else:              r, g, b = v, p, q
+
         colors[i] = (r, g, b)
     return colors
 
 
-def process_image(img_path: Path, out_path: Path, layers_data: dict, colors_map: dict,
-                  margin: int, thickness: int, alpha:float):
-    # Création du dossier parent de l'image de sortie
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
+def process_image(img_path: Path, out_path: Path, footprints: dict, layers_data: dict,
+                  colors_map: dict, margin: int, thickness: int, alpha: float):
+    """
+    Traite une image PNG en y incrustant les couleurs de vérité terrain.
+    Détermine d'abord pour chaque A-scan sa planche d'appartenance puis trouve
+    le point le plus proche dans les KDTrees associés de façon vectorisée.
+    """
     img = Image.open(img_path)
     rgb_img = img.convert("RGB")
     pixels = rgb_img.load()
 
-    # Lecture des métadonnées
     meta = img.text
     gps_x_start = float(meta["GPS_X_START"])
     gps_y_start = float(meta["GPS_Y_START"])
@@ -129,69 +151,81 @@ def process_image(img_path: Path, out_path: Path, layers_data: dict, colors_map:
     width, height = rgb_img.size
     bscan_w = width - 2 * margin
     bscan_h = height - 2 * margin
-
     half_thick = thickness // 2
 
-    # Accumulateur pour stocker { (x, y): [somme_R, somme_G, somme_B, nombre_de_couches] }
+    # Interpolation vectorisée des coordonnées de tous les A-scans
+    fractions = np.linspace(0, 1, bscan_w)
+    curr_xs = gps_x_start + fractions * (gps_x_end - gps_x_start)
+    curr_ys = gps_y_start + fractions * (gps_y_end - gps_y_start)
+    a_scan_coords = np.column_stack((curr_xs, curr_ys))
+
+    # Détermination de l'appartenance de chaque A-scan à une emprise (planche)
+    assigned_planche = np.full(bscan_w, "", dtype=object)
+    for planche_id, poly in footprints.items():
+        in_poly = poly.contains_points(a_scan_coords)
+        mask_to_assign = in_poly & (assigned_planche == "")
+        assigned_planche[mask_to_assign] = planche_id
+
+    # Dictionnaire d'accumulation de la couleur: {(x, y): [R_sum, G_sum, B_sum, count]}
     color_accumulator = {}
 
-    # Parcours des A-scans (colonnes du B-scan sans marges)
-    for i in range(bscan_w):
-        # Interpolation spatiale
-        fraction = i / max(1, bscan_w - 1)
-        curr_x = gps_x_start + fraction * (gps_x_end - gps_x_start)
-        curr_y = gps_y_start + fraction * (gps_y_end - gps_y_start)
+    # Itération par planche trouvée dans cette image (pour requête KDTree groupée)
+    unique_planches = np.unique(assigned_planche)
+    for planche_id in unique_planches:
+        if planche_id == "":
+            continue  # A-scans en dehors de toute emprise
 
-        for layer_name, data in layers_data.items():
+        # Indices des A-scans concernés par cette planche
+        indices = np.where(assigned_planche == planche_id)[0]
+        coords_for_planche = a_scan_coords[indices]
+
+        # Parcours des couches de la planche
+        for layer_name, data in layers_data[planche_id].items():
             tree = data["tree"]
             times_list = data["times"]
 
-            # Recherche du point le plus proche
-            _, idx = tree.query([curr_x, curr_y])
-            point_times = times_list[idx]
-
             cr, cg, cb = colors_map[layer_name]
 
-            for t_ns in point_times:
-                # Calcul de l'index du pixel en y
-                y_pixel = int(round(t_ns / time_step_ns))
+            # Requête vectorisée sur le KDTree pour tous les A-scans de cette planche
+            _, nn_indices = tree.query(coords_for_planche)
+            point_times_array = times_list[nn_indices]
 
-                # Détermination des bornes de la bande autour du centre
-                y_start = y_pixel - half_thick
-                y_end = y_start + thickness
+            # Accumulation spatiale pixel par pixel
+            for i_local, a_scan_idx in enumerate(indices):
+                point_times = point_times_array[i_local]
+                for t_ns in point_times:
+                    y_pixel = int(round(t_ns / time_step_ns))
+                    y_start = max(0, y_pixel - half_thick)
+                    y_end = min(bscan_h, y_pixel - half_thick + thickness)
 
-                for dy in range(y_start, y_end):
-                    # Vérification que le point reste dans l'image (sans recouvrir les marges)
-                    if 0 <= dy < bscan_h:
-                        final_x = i + margin
+                    for dy in range(y_start, y_end):
+                        final_x = a_scan_idx + margin
                         final_y = dy + margin
 
-                        # Ajout à l'accumulateur au lieu de modifier le pixel immédiatement
                         if (final_x, final_y) not in color_accumulator:
                             color_accumulator[(final_x, final_y)] = [0, 0, 0, 0]
 
-                        color_accumulator[(final_x, final_y)][0] += cr
-                        color_accumulator[(final_x, final_y)][1] += cg
-                        color_accumulator[(final_x, final_y)][2] += cb
-                        color_accumulator[(final_x, final_y)][3] += 1
+                        acc = color_accumulator[(final_x, final_y)]
+                        acc[0] += cr
+                        acc[1] += cg
+                        acc[2] += cb
+                        acc[3] += 1
 
-    # Application des couleurs accumulées sur l'image
+    # Appliquer les couleurs finales sur l'image
     for (x, y), (r_sum, g_sum, b_sum, count) in color_accumulator.items():
         pr, pg, pb = pixels[x, y]
-
-        # Moyenne des couleurs des layers pour ce pixel
         avg_cr = r_sum // count
         avg_cg = g_sum // count
         avg_cb = b_sum // count
 
-        # Mélange final : B-scan d'origine pondéré par (1 - alpha) + moyenne des layers pondérée par alpha
         new_r = int(pr * (1 - alpha) + avg_cr * alpha)
         new_g = int(pg * (1 - alpha) + avg_cg * alpha)
         new_b = int(pb * (1 - alpha) + avg_cb * alpha)
 
         pixels[x, y] = (new_r, new_g, new_b)
 
-    # Préservation des métadonnées d'origine
+    # Sauvegarde en conservant les métadonnées
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     png_info = PngImagePlugin.PngInfo()
     for k, v in meta.items():
         png_info.add_text(k, v)
@@ -200,6 +234,7 @@ def process_image(img_path: Path, out_path: Path, layers_data: dict, colors_map:
 
 
 def create_legend(output_dir: Path, colors_map: dict, legend_name: str):
+    """Génère et sauvegarde une image de légende pour toutes les couches."""
     square_size = 128
     padding = 16
     width = 512
@@ -208,7 +243,6 @@ def create_legend(output_dir: Path, colors_map: dict, legend_name: str):
 
     legend_img = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(legend_img)
-
     font = ImageFont.load_default(size=font_size)
 
     for idx, (layer_name, color) in enumerate(colors_map.items()):
@@ -230,34 +264,42 @@ def create_legend(output_dir: Path, colors_map: dict, legend_name: str):
 
 def main():
     conf = get_conf(verbose=False)
+
+    # Récupération des chemins de configuration sous forme de Path
     directories = [Path(p) for p in conf.input_dir]
     output_dir = Path(conf.output_dir)
     root_dir = Path(conf.root_dir)
-    velocities_path = Path(conf.velocities_path)
-    layers_paths = [Path(p) for p in conf.layers_paths]
 
-    # Chargement et préparation des données
-    velocities = load_velocities(velocities_path)
-    layers_data = load_layers(layers_paths, velocities)
+    footprints_dict = {k: Path(v) for k, v in conf.footprint_path.items()}
+    velocities_dict = {k: Path(v) for k, v in conf.velocities_path.items()}
+    layers_dict = {k: [Path(p) for p in v] for k, v in conf.layers_path.items()}
 
-    # Attribution des couleurs
-    raw_colors = generate_colors(len(layers_data))
-    colors_map = {name: raw_colors[i] for i, name in enumerate(layers_data.keys())}
+    # Chargement global des données de vérité terrain par planche
+    print("Chargement des configurations et fichiers de vérité terrain...")
+    footprints = load_footprints(footprints_dict)
+    velocities = load_velocities(velocities_dict)
+    layers_data, all_layer_names = load_layers(layers_dict, velocities)
 
-    # Traitement des images PNG
-    print("Start processing images...")
+    # Attribution de couleurs uniques pour l'ensemble des couches
+    raw_colors = generate_colors(len(all_layer_names))
+    colors_map = {name: raw_colors[i] for i, name in enumerate(all_layer_names)}
+
+    # Traitement itératif des images PNG
+    print("Lancement du traitement des images...")
     for directory in directories:
         for img_path in directory.rglob("*.png"):
-            # Calcul du chemin relatif par rapport à root_dir
             rel_path = img_path.relative_to(root_dir)
             out_path = output_dir / rel_path
-            out_path.parent.mkdir(parents=True, exist_ok=True)
 
-            process_image(img_path, out_path, layers_data, colors_map, conf.margin, conf.thickness, conf.alpha)
+            process_image(
+                img_path, out_path,
+                footprints, layers_data, colors_map,
+                conf.margin, conf.thickness, conf.alpha
+            )
 
-    # Génération de la légende à la racine du dossier de sortie
+    # Création de la légende unifiée
     create_legend(output_dir, colors_map, conf.legend_name)
-    print("Processing completed.")
+    print("Traitement terminé avec succès.")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,34 @@
+root_dir: C:/Users/Admin/Documents/Data
+input_dir:
+# recyclee
+  - C:/Users/Admin/Documents/Data/Collecte STAC/2025/Sol/Planche recyclée
+  - C:/Users/Admin/Documents/Data/Collecte STAC/2026/2026-01-05/Planche_Recycle_Neige
+  - C:/Users/Admin/Documents/Data/Collecte STAC/2026/2026-06-29/Planche recyclee
+# rigide
+  - C:/Users/Admin/Documents/Data/Collecte STAC/2023
+  - C:/Users/Admin/Documents/Data/Collecte STAC/2025/Aerienne
+  - C:/Users/Admin/Documents/Data/Collecte STAC/2025/Sol/Planche Béton
+  - C:/Users/Admin/Documents/Data/Collecte STAC/2026/2026-01-05/Planche_Beton_Neige
+# souple - rigide
+  - C:/Users/Admin/Documents/Data/Collecte STAC/2026/2026-06-29/Planche souple - beton
+output_dir: C:/Users/Admin/Documents/data_gt
+footprint_path:
+  recyclee: C:/Users/Admin/Documents/planches/recyclee/emprise_recyclee.csv
+  rigide: C:/Users/Admin/Documents/planches/souple-rigide/emprise_rigide.csv
+  souple: C:/Users/Admin/Documents/planches/souple-rigide/emprise_souple.csv
+velocities_path:
+  recyclee: C:/Users/Admin/Documents/planches/recyclee/velocities_recyclee.csv
+  rigide: C:/Users/Admin/Documents/planches/souple-rigide/velocities_rigide.csv
+  souple: C:/Users/Admin/Documents/planches/souple-rigide/velocities_souple.csv
+layers_path:
+  recyclee:
+    - C:/Users/Admin/Documents/planches/recyclee/rani_recyclee.csv
+    - C:/Users/Admin/Documents/planches/recyclee/core_recyclee.csv
+  rigide:
+    - C:/Users/Admin/Documents/planches/souple-rigide/core_rigide.csv
+  souple:
+    - C:/Users/Admin/Documents/planches/souple-rigide/core_souple.csv
+legend_name: legend
+margin: 5
+thickness: 2
+alpha: 0.6
