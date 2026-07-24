@@ -28,6 +28,8 @@ layers_path:
     - C:/Users/Admin/Documents/planches/souple-rigide/core_rigide.csv
   souple:
     - C:/Users/Admin/Documents/planches/souple-rigide/core_souple.csv
+    - C:/Users/Admin/Documents/planches/souple-rigide/manuel_souple.csv
+    - C:/Users/Admin/Documents/planches/souple-rigide/rs_souple.csv
 legend_name: legend
 margin: 5
 thickness: 2
